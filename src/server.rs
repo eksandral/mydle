@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::systems::*;
 use specs::{Builder, Dispatcher, DispatcherBuilder, Entity, Join};
 use specs::{World, WorldExt};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time;
 
 use crate::data::char::{PlayerData, TargetData};
@@ -40,7 +40,7 @@ impl Server {
         world.insert(DeltaTime::default());
         world
     }
-    pub fn get_dispatcher<'a, 'b>() -> Dispatcher<'a, 'b> {
+    pub fn get_dispatcher() -> Dispatcher<'static, 'static> {
         let dispatcher = DispatcherBuilder::new()
             .with(combat::FightSystem, "fight", &[])
             .with(combat::DamageSystem, "damage", &["fight"])
@@ -154,7 +154,13 @@ impl Server {
         Ok(player_data)
     }
 }
-pub async fn run_game_loop(sender: UnboundedSender<u64>) {
+pub async fn run_game_loop(
+    sender: UnboundedSender<ServerMessage>,
+    mut receiver: UnboundedReceiver<ServerMessage>,
+) {
+    let mut dispatcher = Server::get_dispatcher();
+    let mut world = Server::new_world();
+    //let receiver = receiver.clone();
     log::info!("Starting game loop");
     let mut interval = time::interval(Duration::from_millis(1000 / 300));
     loop {
@@ -163,7 +169,8 @@ pub async fn run_game_loop(sender: UnboundedSender<u64>) {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
-        match sender.send(dt as u64) {
+
+        match sender.send(ServerMessage::SystemTime(dt as u64)) {
             Ok(_) => {
                 //log::debug!("Send delta time to UI {:?}", dt);
             }
@@ -172,6 +179,18 @@ pub async fn run_game_loop(sender: UnboundedSender<u64>) {
                 break;
             }
         }
+        //let mut receiver = receiver.lock().unwrap();
+        while let Ok(message) = receiver.try_recv() {
+            log::debug!("Received a message from GUI: {:?}", message);
+        }
+        dispatcher.dispatch(&world);
+        world.maintain();
     }
     log::warn!("Game loop is finished");
+}
+#[derive(Debug)]
+pub enum ServerMessage {
+    SystemTime(u64),
+    Binary(Vec<u8>),
+    Text(String),
 }

@@ -1,7 +1,9 @@
+use std::sync::{Arc, Mutex};
+
 use chrono::{DateTime, Utc};
 use eframe::egui::{self, style::Spacing, FontFamily, FontId, TextStyle, Widget};
 use egui_extras::{Column, TableBuilder};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     data::{
@@ -9,15 +11,16 @@ use crate::{
         combat_tabs::{CombatTabs, Tab as CombatTab},
     },
     prelude::{Equipment, Invenotry, Item as InvItem},
+    server::ServerMessage,
 };
 
 use super::{character::show_char_ui, View, ViewMut};
 
-#[derive(Debug)]
 pub struct App {
     state: State,
-    receiver: UnboundedReceiver<u64>,
+    receiver: UnboundedReceiver<ServerMessage>,
     combat_tabs: CombatTabs,
+    sender: Arc<Mutex<UnboundedSender<ServerMessage>>>,
 }
 #[derive(Debug, Default)]
 pub struct State {
@@ -81,12 +84,31 @@ impl eframe::App for App {
     }
 }
 impl App {
-    pub fn new(receiver: UnboundedReceiver<u64>) -> Self {
+    pub fn new(
+        sender: UnboundedSender<ServerMessage>,
+        receiver: UnboundedReceiver<ServerMessage>,
+    ) -> Self {
+        let sender = Arc::new(Mutex::new(sender));
         let mut state = State::default();
         state.cols_num = 2;
-        let combat_tabs = CombatTabs::default();
+        let sender_clone = sender.clone();
+        let combat_tabs = CombatTabs {
+            current_tab: Default::default(),
+            current_zone: None,
+            on_change: None,
+            on_zone_change: Some(Box::new(move |zone| {
+                log::debug!("Sending data from zone change callback: {:?}", zone);
+                let data = format!("Zone is changed to  {:?}", zone);
+                sender_clone
+                    .lock()
+                    .unwrap()
+                    .send(ServerMessage::Text(data))
+                    .unwrap();
+            })),
+        };
         Self {
             receiver,
+            sender,
             state,
             combat_tabs,
         }
@@ -100,7 +122,10 @@ impl App {
 
     fn receive_messages(&mut self) {
         while let Ok(message) = self.receiver.try_recv() {
-            self.state.set_dt(message);
+            match message {
+                ServerMessage::SystemTime(dt) => self.state.set_dt(dt),
+                _ => (),
+            }
         }
     }
     fn draw_left_bar(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
