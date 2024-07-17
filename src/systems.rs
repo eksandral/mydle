@@ -55,7 +55,8 @@ impl<'a> System<'a> for LevelSystem {
                 exp
             );
             for (e_src, xp) in &exp.exp {
-                let xp = xp * level.value as usize * 2;
+                log::debug!("xp = {}, level.value = {}", xp, level.value);
+                let xp = xp * (level.value as usize) * 2;
                 players_xp.push((*e_src, xp));
             }
             exp.clear();
@@ -114,16 +115,18 @@ impl<'a> System<'a> for LevelUpSystem {
             .join()
         {
             log::debug!(
-                "Calculate new stats for {} fater leveling up: {} LVL",
+                "Calculate new stats for {}. New level: {}",
                 name.value,
                 level.value
             );
-            let level_mod = (level.value as f32 + 89.0) * 0.01; // level_mod / 100
+            let old_combat = combat.clone();
+            let level_mod = (level.value as f32 + 8.9) * 0.1; // level_mod / 100
                                                                 // Calculate Attack power
             let str_mod = char_stats.str_modifier(); // str_mod / 100
-            let weapon_atk = weapons.get(e).map(|x| x.p_atack as f32).unwrap_or(4.0);
+            let weapon_atk = weapons.get(e).map(|x| x.stats.p_atk as f32).unwrap_or(4.0);
             let mastery_mod = 1.085;
             let attack_power = str_mod * level_mod * weapon_atk * mastery_mod;
+            log::debug!("New Attack power {}", attack_power);
             combat.p_attack = attack_power as usize;
             //Calculate defence
             //
@@ -135,6 +138,7 @@ impl<'a> System<'a> for LevelUpSystem {
             log::debug!("Old Health: {:?}", health);
             health.recalculate_for_level_and_stats(level.value, &char_stats);
             log::debug!("New Health: {:?}", health);
+            log::debug!("Combat values change: {:?} > {:?}", old_combat, combat);
             update.remove::<LevelUp>(e);
         }
     }

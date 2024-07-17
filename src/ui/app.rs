@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    any,
+    sync::{Arc, Mutex},
+};
 
 use chrono::{DateTime, Utc};
 use eframe::egui::{self, style::Spacing, FontFamily, FontId, TextStyle, Widget};
@@ -10,8 +13,9 @@ use crate::{
         char::{Loot, PlayerData},
         combat_tabs::{CombatTabs, Tab as CombatTab},
     },
+    //server::ServerMessage,
+    network::Message as ServerMessage,
     prelude::{Equipment, Invenotry, Item as InvItem},
-    server::ServerMessage,
 };
 
 use super::{character::show_char_ui, View, ViewMut};
@@ -98,11 +102,11 @@ impl App {
             on_change: None,
             on_zone_change: Some(Box::new(move |zone| {
                 log::debug!("Sending data from zone change callback: {:?}", zone);
-                let data = format!("Zone is changed to  {:?}", zone);
+                //let data = format!("Zone is changed to  {:?}", zone);
                 sender_clone
                     .lock()
                     .unwrap()
-                    .send(ServerMessage::Text(data))
+                    .send(ServerMessage::EnterZone(zone))
                     .unwrap();
             })),
         };
@@ -112,6 +116,13 @@ impl App {
             state,
             combat_tabs,
         }
+    }
+    pub fn connect(&mut self) -> anyhow::Result<()> {
+        self.sender
+            .lock()
+            .unwrap()
+            .send(ServerMessage::Connect(0))?;
+        Ok(())
     }
     pub fn handle_keyboard(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -124,6 +135,9 @@ impl App {
         while let Ok(message) = self.receiver.try_recv() {
             match message {
                 ServerMessage::SystemTime(dt) => self.state.set_dt(dt),
+                ServerMessage::PlayerData(data) => {
+                    self.state.player = data;
+                }
                 _ => (),
             }
         }
@@ -208,6 +222,16 @@ impl App {
                 });
             });
         });
+        if let Some(_) = self.state.player.target {
+            ui.vertical_centered(|ui| {
+                if ui.button("Leave").clicked() {
+                    if let Err(e) = self.sender.lock().unwrap().send(ServerMessage::LeaveZone) {
+                        log::error!("{}", e);
+                    }
+                    self.combat_tabs.current_zone = None;
+                }
+            });
+        }
         ui.separator();
         ui.vertical_centered(|ui| {
             ui.set_height(min_height);
@@ -312,6 +336,41 @@ impl App {
                     }
                 });
             });
+            body.row(height, |mut row| {
+                row.col(|ui| {
+                    ui.label("Left Hand");
+                });
+                row.col(|ui| match equipment.left_hand.as_ref() {
+                    Some(h) => {
+                        if ui.button(h.name.to_string()).double_clicked() {
+                            equipment.left_hand = None;
+                            if let Ok(sender) = self.sender.lock() {
+                                sender
+                                    .send(ServerMessage::RemoveWeapon { left_hand: true })
+                                    .unwrap();
+                            }
+                        }
+                    }
+                    None => {
+                        ui.label("<Empty>");
+                    }
+                });
+            });
+            body.row(height, |mut row| {
+                row.col(|ui| {
+                    ui.label("Right Hand");
+                });
+                row.col(|ui| match equipment.right_hand.as_ref() {
+                    Some(h) => {
+                        if ui.button(h.name.to_string()).double_clicked() {
+                            equipment.right_hand = None;
+                        }
+                    }
+                    None => {
+                        ui.label("<Empty>");
+                    }
+                });
+            });
         });
     }
 
@@ -339,6 +398,7 @@ impl App {
                             InvItem::LowerBody(i) => i.name.to_owned(),
                             InvItem::Gloves(i) => i.name.to_owned(),
                             InvItem::Boots(i) => i.name.to_owned(),
+                            InvItem::Weapon(i) => i.name.to_owned(),
                         };
                         let ui = &mut cols[i % cols_num];
                         let available_width = ui.available_width();
@@ -361,6 +421,17 @@ impl App {
                                 }
                                 InvItem::Boots(i) => {
                                     self.state.equipment.boots = Some(i.clone());
+                                }
+                                InvItem::Weapon(i) => {
+                                    self.state.equipment.left_hand = Some(i.clone());
+                                    if let Ok(sender) = self.sender.lock() {
+                                        sender
+                                            .send(ServerMessage::UseWeapon {
+                                                left_hand: true,
+                                                weapon: i.clone(),
+                                            })
+                                            .unwrap();
+                                    }
                                 }
                             };
                         }

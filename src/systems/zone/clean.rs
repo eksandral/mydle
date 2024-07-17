@@ -19,7 +19,7 @@ impl<'a> System<'a> for RemoveDefeated {
         for (e, _, _, name) in (&entities, &defeated, &mob_flags, &names).join() {
             log::debug!("Remove entity with name {}", name.value);
             update.remove::<Defeated>(e);
-            counter.dec();
+            counter.clean(&e);
             entities.delete(e).unwrap();
         }
     }

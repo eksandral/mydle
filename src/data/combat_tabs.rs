@@ -1,6 +1,6 @@
 use eframe::egui::{self, Widget};
 
-use crate::{prelude::Zone, server::ServerMessage, ui::ViewMut};
+use crate::{prelude::Zone, ui::ViewMut};
 
 pub struct CombatTabs {
     pub current_tab: Tab,

@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 use specs::{Component, VecStorage};
-#[derive(Debug, Default, Component, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Component, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 #[storage(VecStorage)]
 pub enum Zone {
     #[default]

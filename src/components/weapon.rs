@@ -1,10 +1,24 @@
+use crate::{components::equipment::Stats, TestData};
+use serde::{Deserialize, Serialize};
 use specs::{Component, VecStorage};
-#[derive(Debug, Default, Component)]
+#[derive(Debug, Default, Component, Serialize, Deserialize, Clone)]
 #[storage(VecStorage)]
 pub struct Weapon {
-    pub p_atack: u8,
+    pub stats: Stats,
+    pub name: String,
 }
 impl Weapon {
-    pub const SWORD: Self = Self { p_atack: 7 };
-    pub const DAGGER: Self = Self { p_atack: 5 };
+    pub fn sword(name: String, p_atk: usize) -> Self {
+        let stats = Stats::default().with_p_atk(p_atk);
+        Self { name, stats }
+    }
+}
+impl TestData for Weapon {
+    fn test_data() -> Self {
+        let stats = Stats::default().with_p_atk(6);
+        Self {
+            name: "A Sword".to_string(),
+            stats,
+        }
+    }
 }

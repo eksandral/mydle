@@ -6,8 +6,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::{
     data::char::Loot,
+    network::Message as ServerMessage,
     prelude::{Health, Level},
-    server::ServerMessage,
 };
 
 pub trait View {
@@ -20,13 +20,20 @@ pub async fn run_ui_app(
     sender: UnboundedSender<ServerMessage>,
     receiver: UnboundedReceiver<ServerMessage>,
 ) -> eframe::Result<()> {
-    let app = app::App::new(sender, receiver);
+    let mut app = app::App::new(sender, receiver);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     };
-    eframe::run_native("Confirm exit", options, Box::new(|_cc| Box::new(app)))
+    eframe::run_native(
+        "Confirm exit",
+        options,
+        Box::new(|_cc| {
+            app.connect().unwrap();
+            Box::new(app)
+        }),
+    )
 }
 impl View for Level {
     fn ui(&self, ui: &mut egui::Ui) {

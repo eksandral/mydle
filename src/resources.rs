@@ -1,18 +1,30 @@
-use std::{time::Duration, usize};
+use std::{collections::HashMap, time::Duration, usize};
 
 use serde::{Deserialize, Serialize};
+use specs::Entity;
+
+use crate::prelude::Zone;
 
 #[derive(Default)]
-pub struct MobCount(pub usize);
+pub struct MobCount {
+    pub zone_to_mob: HashMap<Zone, Entity>,
+    pub mob_to_zone: HashMap<Entity, Zone>,
+}
 impl MobCount {
-    pub fn inc(&mut self) {
-        self.0 += 1;
-    }
-    pub fn dec(&mut self) {
-        if self.0 > 0 {
-            self.0 -= 1;
+    pub fn clean(&mut self, mob: &Entity) {
+        if let Some(zone) = self.mob_to_zone.get(mob) {
+            self.zone_to_mob.remove(zone);
+            self.mob_to_zone.remove(mob);
         }
     }
+    //pub fn inc(&mut self) {
+    //    self.0 += 1;
+    //}
+    //pub fn dec(&mut self) {
+    //    if self.0 > 0 {
+    //        self.0 -= 1;
+    //    }
+    //}
 }
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct DeltaTime(pub Duration);

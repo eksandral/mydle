@@ -40,7 +40,7 @@ impl Level {
 impl Default for Level {
     fn default() -> Self {
         let value = 1;
-        let experience = Self::level_to_experience(value);
+        let experience = 0;
         Self { value, experience }
     }
 }

@@ -3,6 +3,8 @@ use specs::{Component, VecStorage};
 
 use crate::TestData;
 
+use super::weapon::Weapon;
+
 #[derive(Debug, Component, Serialize, Deserialize, Clone)]
 #[storage(VecStorage)]
 pub struct Equipment {
@@ -11,6 +13,8 @@ pub struct Equipment {
     pub lower_body: Option<LowerBody>,
     pub gloves: Option<Gloves>,
     pub boots: Option<Boots>,
+    pub left_hand: Option<Weapon>,
+    pub right_hand: Option<Weapon>,
 }
 impl TestData for Equipment {
     fn test_data() -> Self {
@@ -20,6 +24,8 @@ impl TestData for Equipment {
             lower_body: Some(LowerBody::test_data()),
             gloves: Some(Gloves::test_data()),
             boots: Some(Boots::test_data()),
+            left_hand: None,
+            right_hand: None,
         }
     }
 }
@@ -30,11 +36,11 @@ impl Default for Equipment {
 }
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct Stats {
-    p_atk: usize,
-    p_def: usize,
-    m_atk: usize,
-    m_def: usize,
-    weight: usize,
+    pub p_atk: usize,
+    pub p_def: usize,
+    pub m_atk: usize,
+    pub m_def: usize,
+    pub weight: usize,
 }
 impl Stats {
     pub fn with_p_atk(mut self, value: usize) -> Self {

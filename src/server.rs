@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::network::Message as ServerMessage;
 use crate::systems::*;
-use specs::{Builder, Dispatcher, DispatcherBuilder, Entity, Join};
+use eframe::wgpu::naga::MathFunction;
+use specs::storage::{GenericReadStorage, GenericWriteStorage};
+use specs::{AsyncDispatcher, Builder, Dispatcher, DispatcherBuilder, Entity, Join};
 use specs::{World, WorldExt};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::time;
 
 use crate::data::char::{PlayerData, TargetData};
 use crate::prelude::*;
@@ -41,6 +43,12 @@ impl Server {
         world
     }
     pub fn get_dispatcher() -> Dispatcher<'static, 'static> {
+        Self::get_dispatcher_builder().build()
+    }
+    pub fn get_async_dispatcher<R>(world: R) -> AsyncDispatcher<'static, R> {
+        Self::get_dispatcher_builder().build_async(world)
+    }
+    pub fn get_dispatcher_builder() -> DispatcherBuilder<'static, 'static> {
         let dispatcher = DispatcherBuilder::new()
             .with(combat::FightSystem, "fight", &[])
             .with(combat::DamageSystem, "damage", &["fight"])
@@ -52,8 +60,7 @@ impl Server {
                 zone::RemoveDefeated,
                 "remove_defeated",
                 &["zone_spawn", "damage", "level"],
-            )
-            .build();
+            );
         dispatcher
     }
     pub fn create_player_entity(world: &mut World) -> Entity {
@@ -61,7 +68,7 @@ impl Server {
         let player_entity = world
             .create_entity()
             .with(Player)
-            .with(Weapon::SWORD)
+            .with(Weapon::sword("Default Sword".to_string(), 7))
             .with(Level::default())
             .with(Name {
                 value: "Player".to_string(),
@@ -87,11 +94,10 @@ impl Server {
             None => Self::create_player_entity(world),
         }
     }
-    pub fn prepare_player_date(
-        world: Arc<Mutex<specs::World>>,
+    pub fn prepare_player_data_from_world(
+        world: &specs::World,
         entity: Entity,
     ) -> anyhow::Result<PlayerData> {
-        let world = world.lock().unwrap();
         let name_storage = world.read_storage::<Name>();
         let level_storage = world.read_storage::<Level>();
         let health_storage = world.read_storage::<Health>();
@@ -153,18 +159,30 @@ impl Server {
 
         Ok(player_data)
     }
+    pub fn prepare_player_date(
+        world: Arc<Mutex<specs::World>>,
+        entity: Entity,
+    ) -> anyhow::Result<PlayerData> {
+        let world = world.lock().unwrap();
+        Self::prepare_player_data_from_world(&world, entity)
+    }
 }
-pub async fn run_game_loop(
+pub fn run_game_loop(
     sender: UnboundedSender<ServerMessage>,
     mut receiver: UnboundedReceiver<ServerMessage>,
 ) {
-    let mut dispatcher = Server::get_dispatcher();
     let mut world = Server::new_world();
-    //let receiver = receiver.clone();
+    let mut dispatcher = Server::get_dispatcher();
     log::info!("Starting game loop");
-    let mut interval = time::interval(Duration::from_millis(1000 / 300));
+    let duration = Duration::from_millis(1000 / 300);
+    let entity = Arc::new(Mutex::new(None)).clone();
+    let mut current_time = std::time::Instant::now();
     loop {
-        let _ = interval.tick().await;
+        let _ = std::thread::sleep(duration);
+        {
+            let mut dt = world.write_resource::<DeltaTime>();
+            (*dt).0 = current_time.elapsed();
+        }
         let dt = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -179,18 +197,106 @@ pub async fn run_game_loop(
                 break;
             }
         }
-        //let mut receiver = receiver.lock().unwrap();
         while let Ok(message) = receiver.try_recv() {
-            log::debug!("Received a message from GUI: {:?}", message);
+            match message {
+                ServerMessage::Connect(id) => {
+                    log::info!("New Client Connected: {}", id);
+                    let player_entity = Server::create_player_entity_with_id(&mut world, id);
+                    log::debug!("New Player Entity {:?}", &player_entity);
+                    let mut entity = entity.lock().unwrap();
+                    *entity = Some(player_entity);
+                }
+                ServerMessage::EnterZone(zone) => {
+                    log::info!("The Client Entered zone: {:?}", zone);
+                    if let Some(e) = entity.lock().unwrap().as_ref() {
+                        let mut zone_storage = world.write_storage::<Zone>();
+                        zone_storage
+                            .insert(*e, zone)
+                            .expect("Enter zone is not possible for the entity");
+                    } else {
+                        log::warn!("There is no player entity to enter the {:?}", zone);
+                    }
+                }
+                ServerMessage::LeaveZone => {
+                    log::info!("The Client left a zone");
+                    if let Some(e) = entity.lock().unwrap().as_ref() {
+                        let mut zone_storage = world.write_storage::<Zone>();
+                        zone_storage
+                            .remove(*e)
+                            .expect("Leave zone is not possible for the entity");
+                        let p_target_entity = {
+                            let target_storage = world.read_storage::<Target>();
+                            target_storage.get(*e).map(|x| x.target)
+                        };
+                        let mut target_storage = world.write_storage::<Target>();
+                        if let Some(te) = p_target_entity {
+                            target_storage
+                                .remove(te)
+                                .expect("Cannot remove player's target from targets");
+                        }
+                        target_storage
+                            .remove(*e)
+                            .expect("Cannot remove player from target");
+                    } else {
+                    }
+                }
+                ServerMessage::UseWeapon {
+                    left_hand: _,
+                    weapon,
+                } => {
+                    if let Some(e) = entity.lock().unwrap().as_ref() {
+                        let mut weapon_storage = world.write_storage::<Weapon>();
+                        weapon_storage
+                            .insert(*e, weapon)
+                            .expect("Cannot wear a weapon");
+                        let mut storage = world.write_storage::<LevelUp>();
+                        storage.insert(*e, LevelUp).unwrap();
+                    } else {
+                        log::warn!("There is no player entity to enter use  {:?}", weapon);
+                    }
+                }
+
+                ServerMessage::RemoveWeapon { left_hand: _ } => {
+                    log::trace!("Received message to remove a weapon");
+                    if let Some(e) = entity.lock().unwrap().as_ref() {
+                        let mut weapon_storage = world.write_storage::<Weapon>();
+                        weapon_storage.remove(*e).expect("Cannot remove a weapon");
+                        let mut storage = world.write_storage::<LevelUp>();
+                        storage.insert(*e, LevelUp).unwrap();
+                    }
+                }
+                m => log::warn!("Received a message from GUI: {:?}", m),
+            }
         }
         dispatcher.dispatch(&world);
         world.maintain();
+
+        match entity.lock() {
+            Ok(e) => {
+                if let Some(entity) = e.as_ref() {
+                    let data = Server::prepare_player_data_from_world(&world, *entity).unwrap();
+                    let data = ServerMessage::PlayerData(data);
+                    match sender.send(data) {
+                        Ok(_) => {
+                            //log::trace!("Send Player data to UI {:?}", entity);
+                        }
+                        Err(e) => {
+                            log::error!("{}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => log::error!("Lock Error: {}", e),
+        }
+        current_time = std::time::Instant::now();
     }
     log::warn!("Game loop is finished");
 }
-#[derive(Debug)]
-pub enum ServerMessage {
-    SystemTime(u64),
-    Binary(Vec<u8>),
-    Text(String),
-}
+//   #[derive(Debug)]
+//   pub enum ServerMessage {
+//       SystemTime(u64),
+//       Binary(Vec<u8>),
+//       Text(String),
+//       ZoneChange(Zone),
+//   }
